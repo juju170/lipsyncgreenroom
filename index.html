@@ -1,0 +1,324 @@
+<!-- lipsync_greenroom.html
+Simple single-file lipsync generator (mobile-friendly) that creates a green-screen animated video (WebM)
+Instructions: place this file in your repo root and create an `assets/` folder with mouth images named like:
+  assets/mouth_A_front.png  assets/mouth_A_side.png  ... for letters A-Z
+Each letter must be a single-character filename (A..Z or a..z). Use PNG (transparent background OK) and similar sizes.
+
+How it works (quick):
+1. Upload audio (mp3/wav) -> play it
+2. While listening press "Mark start" and "Mark end" to create a clip
+3. Edit clip: choose view (front/side), enter text (each char = 1 frame). You can override view per character.
+4. Preview animation on canvas (green background)
+5. Export -> records canvas + audio to WebM (chroma/greenscreen preserved)
+
+Notes & caveats:
+- Export uses MediaRecorder (WebM). Most modern mobile browsers support it, but Safari on iOS has limited support for MediaRecorder/WebM.
+- If you need MP4, convert the downloaded WebM using a converter or server-side ffmpeg.
+- Working fully on mobile; performance depends on device.
+--><!doctype html>
+
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Lipsync Greenroom (mobile)</title>
+<style>
+  :root{--pad:10px;--accent:#0b84ff}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; margin:0; padding:var(--pad); background:#f6f8fb; color:#111}
+  h1{font-size:18px;margin:4px 0 12px}
+  .row{display:flex;gap:8px;align-items:center}
+  input[type=file]{display:block}
+  button{padding:8px 10px;border-radius:8px;border:1px solid #ddd;background:white}
+  select, input[type=text]{padding:8px;border-radius:8px;border:1px solid #ccc}
+  #canvasWrap{background:transparent;display:flex;justify-content:center;margin:12px 0}
+  canvas{width:320px;height:320px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.08)}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  .clips{margin-top:10px}
+  .clip{padding:8px;background:white;border-radius:10px;margin-bottom:8px;border:1px solid #e6eefc}
+  label{font-size:13px}
+  .small{font-size:12px;color:#555}
+  footer{margin-top:14px;font-size:12px;color:#666}
+  @media (min-width:600px){canvas{width:480px;height:480px}}
+</style>
+</head>
+<body>
+<h1>Lipsync Greenroom — single-file (mobile)</h1>
+<div class="row">
+  <label class="small">Assets folder path (relative):</label>
+  <input id="assetsPath" type="text" value="assets" style="flex:1" />
+</div>
+<div style="margin-top:8px">
+  <input id="audioFile" type="file" accept="audio/*" />
+</div>
+<div style="margin-top:8px" class="controls">
+  <button id="playBtn">Play / Pause</button>
+  <button id="markStart">Mark start</button>
+  <button id="markEnd">Mark end</button>
+  <button id="clearMarkers">Clear all</button>
+  <button id="previewAnim">Preview Animation</button>
+  <button id="exportBtn">Export & Download</button>
+</div>
+<div class="small" style="margin-top:8px">Cara menandai: mainkan audio, tekan <b>Mark start</b> saat mulai bicara, tekan <b>Mark end</b> saat berhenti. Ulangi untuk tiap percakapan/clip.</div><div id="canvasWrap">
+  <canvas id="previewCanvas" width="720" height="720"></canvas>
+</div><div class="clips">
+  <h2 style="font-size:15px;margin:6px 0">Clips</h2>
+  <div id="clipsList"></div>
+</div><footer>
+  Export format: WebM (green background preserved). Jika butuh MP4, konversi WebM ke MP4 di komputer atau server.
+</footer><script>
+// === Simple lipsync generator logic ===
+const audioFileInput = document.getElementById('audioFile');
+const playBtn = document.getElementById('playBtn');
+const markStartBtn = document.getElementById('markStart');
+const markEndBtn = document.getElementById('markEnd');
+const clearMarkersBtn = document.getElementById('clearMarkers');
+const previewBtn = document.getElementById('previewAnim');
+const exportBtn = document.getElementById('exportBtn');
+const clipsList = document.getElementById('clipsList');
+const canvas = document.getElementById('previewCanvas');
+const ctx = canvas.getContext('2d');
+const assetsPathInput = document.getElementById('assetsPath');
+
+let audio = new Audio();
+let markers = []; // {start:sec, end:sec, text:'ABC', view:'front', frames:[]}
+let tempStart = null;
+let assetsCache = {};
+
+function loadAudioFromFile(file){
+  if(!file) return;
+  if(audio.src) URL.revokeObjectURL(audio.src);
+  audio.src = URL.createObjectURL(file);
+  audio.controls = false;
+  audio.load();
+  audio.onloadedmetadata = ()=>{
+    console.log('Audio dur', audio.duration);
+  }
+}
+
+audioFileInput.addEventListener('change', e=>{
+  const f = e.target.files[0];
+  loadAudioFromFile(f);
+})
+
+playBtn.addEventListener('click', ()=>{
+  if(!audio.src) return alert('Upload audio dulu');
+  if(audio.paused) audio.play(); else audio.pause();
+})
+
+markStartBtn.addEventListener('click', ()=>{
+  if(!audio.src) return alert('Upload audio dulu');
+  tempStart = audio.currentTime;
+  alert('Start marked at ' + tempStart.toFixed(2) + 's');
+})
+
+markEndBtn.addEventListener('click', ()=>{
+  if(tempStart === null) return alert('Tandai start dulu');
+  const end = audio.currentTime;
+  if(end <= tempStart) return alert('End harus lebih besar dari start');
+  const clip = {start: tempStart, end, text:'A', view:'front'};
+  markers.push(clip);
+  tempStart = null;
+  renderClipsList();
+})
+
+clearMarkersBtn.addEventListener('click', ()=>{
+  if(!confirm('Hapus semua clip?')) return;
+  markers = [];
+  renderClipsList();
+})
+
+function renderClipsList(){
+  clipsList.innerHTML = '';
+  markers.forEach((c, i)=>{
+    const div = document.createElement('div');
+    div.className = 'clip';
+    div.innerHTML = `
+      <div><b>Clip ${i+1}</b> <span class="small">(${c.start.toFixed(2)}s — ${c.end.toFixed(2)}s)</span></div>
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+        <label>Text (1 char = 1 frame): <input data-idx="${i}" class="txt" value="${escapeHtml(c.text)}" style="width:120px" /></label>
+        <label>View: <select data-idx="${i}" class="viewSel"><option value="front">front</option><option value="side">side</option></select></label>
+        <button data-idx="${i}" class="del">Delete</button>
+        <button data-idx="${i}" class="previewClip">Preview</button>
+      </div>
+      <div class="small" style="margin-top:6px">Per char override: tambahkan angka 0 untuk front, 1 untuk side di belakang karakter, contoh "A0B1C0".
+      </div>
+    `;
+    clipsList.appendChild(div);
+  });
+  // attach listeners
+  clipsList.querySelectorAll('.del').forEach(b=>b.onclick = e=>{markers.splice(+e.target.dataset.idx,1);renderClipsList();});
+  clipsList.querySelectorAll('.txt').forEach(inp=>inp.onchange = e=>{markers[+e.target.dataset.idx].text = e.target.value.trim() || 'A';});
+  clipsList.querySelectorAll('.viewSel').forEach(s=>{s.onchange = e=>{markers[+e.target.dataset.idx].view = e.target.value;}});
+  clipsList.querySelectorAll('.previewClip').forEach(b=>b.onclick = e=>{previewClip(+e.target.dataset.idx);});
+}
+
+function escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// Load image helper (A..Z or a..z)
+function pathForChar(ch, view){
+  const base = assetsPathInput.value || 'assets';
+  // normalize char to uppercase A-Z
+  const C = ch.toUpperCase();
+  // safe filename
+  return `${base}/mouth_${C}_${view}.png`;
+}
+
+function loadImage(url){
+  if(assetsCache[url]) return assetsCache[url];
+  const p = new Promise((res, rej)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = ()=>res(img);
+    img.onerror = ()=>res(null); // resolve null so animation can continue
+    img.src = url;
+  });
+  assetsCache[url] = p;
+  return p;
+}
+
+async function drawFrameForClip(clip, tWithin){
+  // tWithin = seconds from clip.start
+  const duration = clip.end - clip.start;
+  const text = clip.text || 'A';
+  const chars = text.split('');
+  const n = Math.max(1, chars.length);
+  // compute which char index
+  let idx = Math.floor((tWithin / duration) * n);
+  if(idx >= n) idx = n-1;
+  const ch = chars[idx];
+  // detect per-char view override trailing 0/1
+  let view = clip.view || 'front';
+  let charOnly = ch;
+  if(/[0-1]$/.test(ch)){
+    const last = ch.slice(-1);
+    charOnly = ch.slice(0,-1) || 'A';
+    view = last === '1' ? 'side' : 'front';
+  }
+  const url = pathForChar(charOnly, view);
+  const img = await loadImage(url);
+  // draw green background
+  ctx.fillStyle = '#00ff00';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // center image
+  if(img){
+    const iw = img.width, ih = img.height;
+    // scale to fit canvas with some padding
+    const scale = Math.min((canvas.width-60)/iw, (canvas.height-60)/ih, 1.6);
+    const dw = iw * scale, dh = ih * scale;
+    const dx = (canvas.width - dw)/2, dy = (canvas.height - dh)/2;
+    ctx.drawImage(img, dx, dy, dw, dh);
+  } else {
+    // placeholder text
+    ctx.fillStyle = '#003300';
+    ctx.font = '48px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(charOnly || '?', canvas.width/2, canvas.height/2);
+  }
+  // small overlay: time
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(8,8,160,30);
+  ctx.fillStyle = 'white';
+  ctx.font = '16px sans-serif';
+  ctx.fillText((tWithin + clip.start).toFixed(2) + 's', 16 + 70, 28);
+}
+
+let previewRAF = null;
+function previewClip(i){
+  const clip = markers[i];
+  if(!clip) return;
+  let start = clip.start;
+  let t0 = performance.now();
+  const dur = (clip.end - clip.start) * 1000;
+  if(isNaN(dur) || dur<=0) return;
+  const step = async ()=>{
+    const elapsed = performance.now() - t0;
+    const tWithin = Math.min(dur, elapsed)/1000;
+    await drawFrameForClip(clip, tWithin);
+    if(elapsed < dur) previewRAF = requestAnimationFrame(step); else cancelAnimationFrame(previewRAF);
+  }
+  if(previewRAF) cancelAnimationFrame(previewRAF);
+  step();
+}
+
+// Preview full timeline (play through audio and animate all clips)
+previewBtn.addEventListener('click', async ()=>{
+  if(!audio.src) return alert('Upload audio dulu');
+  if(markers.length === 0) return alert('Belum ada clip');
+  // start from 0
+  audio.currentTime = 0;
+  audio.play();
+  const startTime = performance.now();
+  function loop(){
+    const now = performance.now();
+    const t = (now - startTime)/1000; // seconds
+    // find which clip applies
+    const clip = markers.find(c => t >= c.start && t <= c.end);
+    if(clip){
+      drawFrameForClip(clip, t - clip.start);
+    } else {
+      // draw green empty
+      ctx.fillStyle = '#00ff00'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    }
+    if(!audio.paused && audio.currentTime < audio.duration) requestAnimationFrame(loop);
+  }
+  loop();
+})
+
+// Export: record canvas + audio together
+exportBtn.addEventListener('click', async ()=>{
+  if(!audio.src) return alert('Upload audio dulu');
+  // prepare media: canvas stream + audio element
+  const stream = canvas.captureStream(30); // 30fps
+  // connect audio to the stream using AudioContext
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const dst = ac.createMediaStreamDestination();
+  const source = ac.createMediaElementSource(audio);
+  source.connect(dst);
+  source.connect(ac.destination); // still play while recording
+  // merge streams
+  dst.stream.getAudioTracks().forEach(t=>stream.addTrack(t));
+
+  const rec = new MediaRecorder(stream, {mimeType:'video/webm;codecs=vp8,opus'});
+  const chunks = [];
+  rec.ondataavailable = e=>chunks.push(e.data);
+  rec.onstop = e=>{
+    const blob = new Blob(chunks, {type:'video/webm'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'lipsync_webm_' + Date.now() + '.webm';
+    a.click();
+    URL.revokeObjectURL(url);
+    ac.close();
+  }
+
+  // start recording and play audio from 0
+  audio.currentTime = 0;
+  rec.start();
+  audio.play();
+
+  // draw loop synced with the audio time
+  function drawLoop(){
+    const t = audio.currentTime;
+    const clip = markers.find(c => t >= c.start && t <= c.end);
+    if(clip){
+      drawFrameForClip(clip, t - clip.start);
+    } else {
+      ctx.fillStyle = '#00ff00'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    }
+    if(!audio.paused && audio.currentTime < audio.duration) requestAnimationFrame(drawLoop);
+  }
+  drawLoop();
+
+  // stop when audio ends
+  audio.onended = ()=>{
+    if(rec.state === 'recording') rec.stop();
+  }
+
+  alert('Recording started — tunggu sampai audio selesai. File WebM akan otomatis ter-download.');
+})
+
+// initial empty green canvas
+ctx.fillStyle = '#00ff00'; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+</script></body>
+</html>
