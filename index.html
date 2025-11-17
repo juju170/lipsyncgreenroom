@@ -1,42 +1,46 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LipSync GreenRoom</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>lipsyncgreenroom</title>
+  <link rel="stylesheet" href="style.css" />
 
-    <!-- WaveSurfer -->
-    <script src="libs/wavesurfer.min.js"></script>
-    <script src="libs/wavesurfer.regions.min.js"></script>
+  <!-- WaveSurfer -->
+  <script src="libs/wavesurfer.min.js"></script>
+  <script src="libs/wavesurfer.regions.min.js"></script>
 
-    <!-- CCapture (untuk ekspor GIF) -->
-    <script src="libs/ccapture.min.js"></script>
-    <script src="libs/gif.worker.js"></script>
+  <!-- CCapture (untuk ekspor GIF jika suka) -->
+  <script src="libs/ccapture.min.js"></script>
+  <script src="libs/gif.worker.js"></script>
 </head>
 <body>
-
-    <!-- AREA PREVIEW ANIMASI -->
-    <div id="preview-container">
-        <canvas id="preview-canvas" width="600" height="600"></canvas>
+  <header class="topbar">
+    <div class="title">lipsyncgreenroom</div>
+    <div class="controls-top">
+      <input id="audio-input" type="file" accept="audio/*" />
+      <button id="add-marker" title="Tambah penanda start/end">＋</button>
+      <button id="play-btn" title="Play/Pause">▶</button>
+      <label class="zoom-label">Zoom</label>
+      <input id="zoom-slider" type="range" min="20" max="600" value="100" />
+      <button id="export-btn">EKSPOR</button>
     </div>
+  </header>
 
-    <!-- TOMBOL EKSPOR -->
-    <button id="export-btn">EKSPOR</button>
+  <main>
+    <section id="preview-area">
+      <div id="preview-container">
+        <canvas id="preview-canvas" width="1280" height="720"></canvas>
+      </div>
 
-    <!-- TOMBOL-TOMBOL KONTROL -->
-    <div id="controls">
-        <button id="add-marker">+</button>
-        <button id="play-btn">▶</button>
-        <input type="file" id="audio-input" accept="audio/*">
-    </div>
+      <div id="waveform-wrap">
+        <div id="waveform"></div>
+      </div>
 
-    <!-- WAVEFORM -->
-    <div id="waveform"></div>
+      <div id="segments-container"></div>
+    </section>
+  </main>
 
-    <!-- TEMPAT INPUT TEKS PER PENANDA -->
-    <div id="segments-container"></div>
-
-    <script src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
