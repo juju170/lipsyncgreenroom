@@ -66,3 +66,60 @@ button:hover{background:var(--neon-purple);color:#fff}
   .controls-top{flex-wrap:wrap}
   #preview-container{padding:8px}
 }
+/* ========================= */
+/* MARKER (RECTANGLE + TRIANGLE) */
+/* ========================= */
+
+.marker {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  cursor: pointer;
+  z-index: 10;
+}
+
+.marker-body {
+  width: 32px;
+  height: 22px;
+  background: #ff3b3b;
+  border-radius: 4px 4px 0 0;
+  position: relative;
+  box-shadow: 0 0 10px #ff3b3b90;
+}
+
+/* segitiga terbalik */
+.marker-body::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 10px solid transparent;
+  border-right: 10px solid transparent;
+  border-top: 10px solid #ff3b3b;
+}
+
+/* garis penanda ke bawah */
+.marker-line {
+  width: 2px;
+  height: 160px; /* panjang ke waveform */
+  background: #ff3b3b;
+  margin: 0 auto;
+  box-shadow: 0 0 6px #ff3b3b;
+}
+
+/* warna marker END (biru) */
+.marker.end .marker-body {
+  background: #3b9dff;
+  box-shadow: 0 0 10px #3b9dff90;
+}
+
+.marker.end .marker-body::after {
+  border-top-color: #3b9dff;
+}
+
+.marker.end .marker-line {
+  background: #3b9dff;
+}
