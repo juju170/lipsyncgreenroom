@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8" />
@@ -8,11 +8,6 @@
 
   <!-- WaveSurfer -->
   <script src="libs/wavesurfer.min.js"></script>
-  <script src="libs/wavesurfer.regions.min.js"></script>
-
-  <!-- CCapture (untuk ekspor GIF jika suka) -->
-  <script src="libs/ccapture.min.js"></script>
-  <script src="libs/gif.worker.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -34,8 +29,9 @@
       </div>
 
       <div id="waveform-wrap">
-        <div id="waveform"></div>
-    <div id="markers-container"></div>
+        <div id="waveform" class="waveform"></div>
+        <!-- container for markers and segments overlayed on waveform -->
+        <div id="overlay" class="overlay"></div>
       </div>
 
       <div id="segments-container"></div>
