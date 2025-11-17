@@ -5,16 +5,91 @@
   --neon-purple:#b44bff;
   --panel:#0b0f17;
   --chroma:#8CCF67;
+  --marker-start:#ff3b3b;
+  --marker-end:#3b9dff;
+  --segment-fill: rgba(200,20,20,0.25);
 }
 *{box-sizing:border-box}
 body{background:var(--bg-dark);color:#fff;font-family:'Orbitron',sans-serif;margin:0;display:flex;flex-direction:column;align-items:center}
 .topbar{width:100%;display:flex;justify-content:space-between;align-items:center;padding:12px 16px}
 .title{font-weight:700}
-.controls-top{display:flex;gap:8px;align-items:center}
+.controls-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 #preview-container{width:95%;max-width:900px;border:2px solid var(--neon-blue);border-radius:12px;padding:10px;margin-top:14px;background:rgba(26,255,255,0.03);box-shadow:0 0 20px var(--neon-blue)}
 #preview-canvas{width:100%;background:var(--chroma);border-radius:8px;display:block}
-#waveform-wrap{width:95%;max-width:900px;margin-top:12px}
-#waveform{height:96px;border-radius:10px;border:2px solid var(--neon-blue);background:rgba(26,255,255,0.03);box-shadow:0 0 18px var(--neon-blue) inset}
+
+/* waveform wrapper & overlay */
+#waveform-wrap{width:95%;max-width:900px;margin-top:12px;position:relative}
+#waveform{height:96px;border-radius:10px;border:2px solid var(--neon-blue);background:rgba(26,255,255,0.03);box-shadow:0 0 18px var(--neon-blue) inset;overflow:hidden}
+.overlay{position:absolute;left:0;right:0;top:0;bottom:0;pointer-events:none}
+
+/* markers container (inside overlay) */
+.marker {
+  position: absolute;
+  top: 6px; /* place marker above waveform visuals */
+  transform: translateX(-50%);
+  cursor: grab;
+  z-index: 20;
+  pointer-events: auto;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  user-select:none;
+}
+
+/* marker box + triangle merged (house-like pointer) */
+.marker .box {
+  width: 36px;
+  height: 22px;
+  background: var(--marker-start);
+  border-radius:6px 6px 3px 3px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color: #040404;
+  font-weight:700;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.6), 0 0 14px var(--marker-start);
+}
+.marker .box.small { width:30px; height:18px; font-size:12px; }
+
+/* triangle (inset into bottom of box) */
+.marker .triangle {
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-top: 12px solid var(--marker-start);
+  margin-top: -6px; /* overlap with box bottom */
+  filter: drop-shadow(0 6px 8px rgba(0,0,0,0.5));
+}
+
+/* vertical line down to waveform */
+.marker .line {
+  width: 2px;
+  background: var(--marker-start);
+  height: calc(100% - 44px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  margin-top: 2px;
+}
+
+/* end marker color variant */
+.marker.end .box { background: var(--marker-end); box-shadow: 0 6px 16px rgba(0,0,0,0.6), 0 0 14px var(--marker-end); }
+.marker.end .triangle { border-top-color: var(--marker-end); }
+.marker.end .line { background: var(--marker-end); }
+
+/* segment block visual */
+.segment-block {
+  position: absolute;
+  top: 36px; /* align under marker lines visually */
+  height: 24px;
+  background: rgba(200,20,20,0.22);
+  border-radius: 6px;
+  pointer-events: auto;
+  z-index: 10;
+  box-shadow: 0 6px 16px rgba(200,20,20,0.08), inset 0 0 8px rgba(200,20,20,0.06);
+  border: 1px solid rgba(200,20,20,0.35);
+}
+
+/* segments list UI */
 #segments-container{width:95%;max-width:900px;margin-top:12px}
 .segment-box{background:rgba(180,75,255,0.06);border:1px solid var(--neon-purple);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
 .segment-title{color:var(--neon-purple);font-size:13px}
@@ -23,103 +98,10 @@ body{background:var(--bg-dark);color:#fff;font-family:'Orbitron',sans-serif;marg
 /* zoom slider */
 #zoom-slider{width:150px;accent-color:var(--neon-blue)}
 
-/* region handle visuals (appear on top of region) */
-.region-handle {
-  position: absolute;
-  top: -18px; /* above region */
-  left: 0;
-  transform: translateX(-50%);
-  height: 16px;
-  min-width: 36px;
-  padding: 2px 6px;
-  border-radius: 8px;
-  background: linear-gradient(90deg, rgba(180,75,255,0.9), rgba(26,255,255,0.9));
-  color: #030303;
-  font-weight:700;
-  font-size:12px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  cursor:grab;
-  box-shadow:0 6px 14px rgba(0,0,0,0.6);
-  z-index: 5;
-  user-select:none;
-}
-
-/* small left/right visible grips inside region for UX (purely visual) */
-.wsr-region .grip {
-  position: absolute;
-  top: 0;
-  width: 8px;
-  height: 100%;
-  background: rgba(0,0,0,0.15);
-}
-.wsr-region .grip.left { left: 0; cursor: ew-resize; border-top-left-radius:6px; border-bottom-left-radius:6px; }
-.wsr-region .grip.right { right: 0; cursor: ew-resize; border-top-right-radius:6px; border-bottom-right-radius:6px; }
-
-/* buttons */
-button{font-family:'Orbitron',sans-serif;border:2px solid var(--neon-purple);background:transparent;color:var(--neon-purple);padding:8px 12px;border-radius:8px;cursor:pointer;transition:.12s;box-shadow:0 0 10px rgba(180,75,255,0.18)}
-button:hover{background:var(--neon-purple);color:#fff}
-#export-btn{border-color:var(--neon-blue);color:var(--neon-blue);box-shadow:0 0 18px rgba(26,255,255,0.22)}
+/* small responsive */
 @media(max-width:600px){
   #zoom-slider{width:110px}
   .controls-top{flex-wrap:wrap}
   #preview-container{padding:8px}
-}
-/* ========================= */
-/* MARKER (RECTANGLE + TRIANGLE) */
-/* ========================= */
-
-.marker {
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  cursor: pointer;
-  z-index: 10;
-}
-
-.marker-body {
-  width: 32px;
-  height: 22px;
-  background: #ff3b3b;
-  border-radius: 4px 4px 0 0;
-  position: relative;
-  box-shadow: 0 0 10px #ff3b3b90;
-}
-
-/* segitiga terbalik */
-.marker-body::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -10px;
-  transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-left: 10px solid transparent;
-  border-right: 10px solid transparent;
-  border-top: 10px solid #ff3b3b;
-}
-
-/* garis penanda ke bawah */
-.marker-line {
-  width: 2px;
-  height: 160px; /* panjang ke waveform */
-  background: #ff3b3b;
-  margin: 0 auto;
-  box-shadow: 0 0 6px #ff3b3b;
-}
-
-/* warna marker END (biru) */
-.marker.end .marker-body {
-  background: #3b9dff;
-  box-shadow: 0 0 10px #3b9dff90;
-}
-
-.marker.end .marker-body::after {
-  border-top-color: #3b9dff;
-}
-
-.marker.end .marker-line {
-  background: #3b9dff;
+  .marker .line { height:70px }
 }
