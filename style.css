@@ -1,0 +1,157 @@
+/* FONT FUTURISTIK */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600&display=swap');
+
+:root {
+    --bg-dark: #05050a;
+    --neon-blue: #1adfff;
+    --neon-purple: #b44bff;
+    --panel: #0b0f17;
+}
+
+body {
+    background: var(--bg-dark);
+    color: white;
+    font-family: 'Orbitron', sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* PREVIEW CANVAS */
+#preview-container {
+    width: 95%;
+    max-width: 650px;
+    margin-top: 20px;
+    border: 2px solid var(--neon-blue);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(26, 255, 255, 0.05);
+    box-shadow: 0 0 20px var(--neon-blue);
+}
+
+#preview-canvas {
+    width: 100%;
+    background: #00ff00; /* CHROMA KEY */
+    border-radius: 8px;
+}
+
+/* TOMBOL */
+button {
+    font-family: 'Orbitron', sans-serif;
+    border: 2px solid var(--neon-purple);
+    background: transparent;
+    color: var(--neon-purple);
+    padding: 10px 16px;
+    margin: 6px;
+    font-size: 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: 0.15s;
+    text-shadow: 0 0 5px var(--neon-purple);
+    box-shadow: 0 0 12px rgba(180, 75, 255, 0.35);
+}
+
+button:hover {
+    background: var(--neon-purple);
+    color: white;
+    box-shadow: 0 0 18px var(--neon-purple);
+}
+
+button:active {
+    transform: scale(0.92);
+}
+
+/* KHUSUS TOMBOL EKSPOR */
+#export-btn {
+    border-color: var(--neon-blue);
+    color: var(--neon-blue);
+    text-shadow: 0 0 5px var(--neon-blue);
+    box-shadow: 0 0 18px rgba(26, 255, 255, 0.4);
+    margin-top: 20px;
+}
+#export-btn:hover {
+    background: var(--neon-blue);
+    color: black;
+}
+
+/* KONTROL */
+#controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 15px;
+}
+
+#audio-input {
+    color: var(--neon-blue);
+    border: 2px dashed var(--neon-blue);
+    padding: 8px;
+    border-radius: 10px;
+    margin-left: 10px;
+    font-size: 14px;
+}
+
+/* WAVEFORM */
+#waveform {
+    width: 95%;
+    max-width: 700px;
+    margin-top: 20px;
+    border: 2px solid var(--neon-blue);
+    border-radius: 10px;
+    background: rgba(26, 255, 255, 0.06);
+    box-shadow: 0 0 20px var(--neon-blue);
+}
+
+/* INPUT TEKS SEGMENTS */
+#segments-container {
+    width: 90%;
+    max-width: 650px;
+    margin-top: 20px;
+}
+
+.segment-box {
+    background: rgba(180, 75, 255, 0.1);
+    border: 2px solid var(--neon-purple);
+    border-radius: 12px;
+    padding: 12px;
+    margin-top: 12px;
+    box-shadow: 0 0 15px rgba(180, 75, 255, 0.4);
+}
+
+.segment-title {
+    font-size: 14px;
+    color: var(--neon-purple);
+}
+
+.segment-input {
+    width: 100%;
+    padding: 8px;
+    margin-top: 10px;
+    border: 2px solid var(--neon-blue);
+    border-radius: 10px;
+    background: rgba(26, 255, 255, 0.1);
+    color: white;
+    font-size: 16px;
+    font-family: 'Orbitron', sans-serif;
+    box-shadow: 0 0 10px rgba(26, 255, 255, 0.4);
+}
+
+.segment-input:focus {
+    outline: none;
+    box-shadow: 0 0 18px var(--neon-blue);
+}
+
+/* MOBILE RESPONSIVE */
+@media (max-width: 600px) {
+    #preview-canvas {
+        height: auto;
+    }
+    
+    button {
+        font-size: 14px;
+        padding: 8px 12px;
+    }
+}
