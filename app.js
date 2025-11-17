@@ -1,39 +1,44 @@
-/* app.js - updated: play/pause, draggable/resizable regions, handles, zoom slider */
-/* assumes wavesurfer.min.js and wavesurfer.regions.min.js ada di /libs/ */
+/* app.js - MARKER MODE 1 implementation
+   - custom markers (box+triangle)
+   - start/end pair -> segment block
+   - draggable markers
+   - zoom slider + pinch gesture
+   - play/pause toggle
+   - segments list with text input
+*/
 
-const CANVAS = document.getElementById('preview-canvas');
-const CTX = CANVAS.getContext('2d');
-const AUDIO_INPUT = document.getElementById('audio-input');
-const ADD_MARKER_BTN = document.getElementById('add-marker');
-const PLAY_BTN = document.getElementById('play-btn');
-const EXPORT_BTN = document.getElementById('export-btn');
-const SEGMENTS_CONTAINER = document.getElementById('segments-container');
-const ZOOM_SLIDER = document.getElementById('zoom-slider');
-const WAVEFORM_EL = document.getElementById('waveform');
+/* UI refs */
+const canvas = document.getElementById('preview-canvas');
+const ctx = canvas.getContext('2d');
+const audioInput = document.getElementById('audio-input');
+const addMarkerBtn = document.getElementById('add-marker');
+const playBtn = document.getElementById('play-btn');
+const exportBtn = document.getElementById('export-btn');
+const zoomSlider = document.getElementById('zoom-slider');
+const waveformEl = document.getElementById('waveform');
+const overlay = document.getElementById('overlay');
+const segmentsContainer = document.getElementById('segments-container');
 
-const CANVAS_W = CANVAS.width;
-const CANVAS_H = CANVAS.height;
-const CHROMA = '#8CCF67'; // sesuai permintaan (pakai warna yang png mu pakai)
+const CANVAS_W = canvas.width, CANVAS_H = canvas.height;
+const CHROMA = '#8CCF67'; // canvas background
 
-// draw chroma background
+/* draw canvas background initially */
 function drawBackground(){
-  CTX.fillStyle = CHROMA;
-  CTX.fillRect(0,0,CANVAS_W,CANVAS_H);
+  ctx.fillStyle = CHROMA;
+  ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
 }
+drawBackground();
 
-// wavesurfer init
+/* Wavesurfer init */
 let wavesurfer = WaveSurfer.create({
   container: '#waveform',
   waveColor: '#1adfff',
   progressColor: '#b44bff',
   height: 88,
-  normalize: true,
-  plugins: [
-    WaveSurfer.regions.create({})
-  ]
+  normalize: true
 });
 
-// viseme mapping (sama seperti sebelumnya)
+/* viseme mapping (same as earlier) */
 const visemeMap = {
   A: "visemes/A,E.png", E: "visemes/A,E.png",
   B: "visemes/B,M,P.png", M: "visemes/B,M,P.png", P: "visemes/B,M,P.png",
@@ -48,350 +53,455 @@ const visemeMap = {
   " ": "visemes/netral.png"
 };
 const neutralImg = new Image(); neutralImg.src = "visemes/netral.png";
-
-// cache loaded images
 const imgCache = {};
 function getVisemeImg(letter){
   const key = (letter||' ').toUpperCase();
   const file = visemeMap[key] || "visemes/netral.png";
   if (imgCache[file]) return imgCache[file];
-  const i = new Image();
-  i.src = file;
-  imgCache[file] = i;
-  return i;
+  const i = new Image(); i.src = file; imgCache[file] = i; return i;
 }
 
-// --- audio load
-AUDIO_INPUT.addEventListener('change', (e)=>{
-  const f = e.target.files[0];
-  if (!f) return;
-  wavesurfer.load(URL.createObjectURL(f));
-  // reset segments container
-  SEGMENTS_CONTAINER.innerHTML = '';
-});
+/* state */
+let markers = []; // {id, el, time, type:'start'|'end'}
+let segments = []; // {id, startMarkerId, endMarkerId, elBlock, data}
+let pendingStartMarker = null;
+let markerCounter = 0;
 
-// --- add marker (start/end toggle)
-let pendingStart = null;
-ADD_MARKER_BTN.addEventListener('click', ()=>{
-  if (!wavesurfer || !wavesurfer.isReady) return alert('Upload audio dulu');
-  const cur = wavesurfer.getCurrentTime();
-  if (pendingStart === null){
-    // create a temporary region with start == cur and no end yet
-    pendingStart = cur;
-    // visual feedback: create short region
-    const r = wavesurfer.addRegion({ start: cur, end: cur + 0.2, color: 'rgba(200,20,20,0.45)', drag: true, resize:true });
-    // mark as pending by storing on element
-    r.update({ data: { pending: true } });
-  } else {
-    const start = Math.min(pendingStart, cur);
-    const end = Math.max(pendingStart, cur);
-    // create real region
-    const region = wavesurfer.addRegion({ start, end, color:'rgba(200,20,20,0.45)', drag:true, resize:true, data:{ text:'' } });
-    // remove any tiny pending region(s)
-    for (const id in wavesurfer.regions.list){
-      const rr = wavesurfer.regions.list[id];
-      if (rr.data && rr.data.pending) rr.remove();
-    }
-    addSegmentUI(region);
-    pendingStart = null;
-  }
-});
+/* helper: waveform dimensions -> px/time conversions */
+function waveformRect(){
+  return waveformEl.getBoundingClientRect();
+}
+function timeToPx(time){
+  const dur = wavesurfer.getDuration() || 1;
+  const rect = waveformRect();
+  return (time / dur) * rect.width;
+}
+function pxToTime(px){
+  const dur = wavesurfer.getDuration() || 1;
+  const rect = waveformRect();
+  let x = px;
+  if (x < 0) x = 0;
+  if (x > rect.width) x = rect.width;
+  return (x / rect.width) * dur;
+}
 
-// handle region created by other means (e.g. program) - add UI & handles
-wavesurfer.on('region-created', (region) => {
-  // ensure draggable/resizable
-  region.update({ drag: true, resize: true });
-  // create or update UI
-  addSegmentUI(region);
-  addHandlesToRegion(region);
-});
-
-// when region is updated (drag/resize) update UI
-wavesurfer.on('region-updated', (region) => {
-  syncRegionToUI(region);
-});
-
-// region removed -> remove UI
-wavesurfer.on('region-removed', (region) => {
-  removeSegmentUI(region);
-});
-
-// --- UI list for segments
-function addSegmentUI(region){
-  // do not duplicate
-  if (document.querySelector(`[data-region-id="${region.id}"]`)) return;
+/* create visual marker element (box+triangle+line) */
+function createMarkerEl(type){
+  const id = 'm' + (++markerCounter);
+  const m = document.createElement('div');
+  m.className = 'marker' + (type === 'end' ? ' end' : '');
+  m.dataset.id = id;
+  m.dataset.type = type;
 
   const box = document.createElement('div');
+  box.className = 'box';
+  box.textContent = (type === 'start' ? 'S' : 'E');
+
+  const tri = document.createElement('div');
+  tri.className = 'triangle';
+
+  const line = document.createElement('div');
+  line.className = 'line';
+
+  m.appendChild(box);
+  m.appendChild(tri);
+  m.appendChild(line);
+
+  // enable pointer events on marker (overlay uses pointer-events:none globally)
+  m.style.pointerEvents = 'auto';
+
+  overlay.appendChild(m);
+  return m;
+}
+
+/* create marker at current time */
+function createMarkerAt(time, type){
+  const el = createMarkerEl(type);
+  const rect = waveformRect();
+  const left = Math.round(timeToPx(time));
+  el.style.left = left + 'px';
+  // attach drag behavior
+  attachDragForMarker(el);
+  const obj = { id: el.dataset.id, el, time, type };
+  markers.push(obj);
+  return obj;
+}
+
+/* attach drag events (mouse + touch) to a marker */
+function attachDragForMarker(el){
+  let dragging = false;
+  let startX = 0;
+  let origLeft = 0;
+
+  function onDown(e){
+    e.preventDefault();
+    dragging = true;
+    el.classList.add('dragging');
+    startX = (e.touches ? e.touches[0].clientX : e.clientX);
+    origLeft = el.offsetLeft;
+    // ensure we can receive move events
+    document.body.style.userSelect = 'none';
+  }
+  function onMove(e){
+    if (!dragging) return;
+    const clientX = (e.touches ? e.touches[0].clientX : e.clientX);
+    const dx = clientX - startX;
+    const rect = waveformRect();
+    let newLeft = origLeft + dx;
+    // clamp to waveform area
+    const minLeft = 0;
+    const maxLeft = rect.width;
+    if (newLeft < minLeft) newLeft = minLeft;
+    if (newLeft > maxLeft) newLeft = maxLeft;
+    el.style.left = newLeft + 'px';
+    // update marker time in state
+    const id = el.dataset.id;
+    const m = markers.find(x=>x.id===id);
+    if (m){
+      m.time = pxToTime(newLeft);
+      // if marker part of a segment, update segment block
+      updateSegmentsForMarker(m.id);
+      // update segment UI times
+      syncSegmentUIForMarker(m.id);
+    }
+  }
+  function onUp(e){
+    if (!dragging) return;
+    dragging = false;
+    el.classList.remove('dragging');
+    document.body.style.userSelect = '';
+  }
+
+  el.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+
+  el.addEventListener('touchstart', onDown, {passive:false});
+  window.addEventListener('touchmove', onMove, {passive:false});
+  window.addEventListener('touchend', onUp);
+}
+
+/* create a segment block between two marker objects */
+function createSegment(startMarker, endMarker){
+  // ensure start < end by time
+  let s = startMarker.time, e = endMarker.time;
+  if (s > e){ const tmp = s; s = e; e = tmp; }
+
+  // create visual block
+  const block = document.createElement('div');
+  block.className = 'segment-block';
+  // compute left & width in px
+  const rect = waveformRect();
+  const left = Math.round((s / (wavesurfer.getDuration()||1)) * rect.width);
+  const right = Math.round((e / (wavesurfer.getDuration()||1)) * rect.width);
+  block.style.left = left + 'px';
+  block.style.width = Math.max(2, right - left) + 'px';
+  overlay.appendChild(block);
+
+  // create data structure and UI
+  const segId = 'seg' + (segments.length + 1);
+  const seg = { id: segId, startMarkerId: startMarker.id, endMarkerId: endMarker.id, elBlock: block, data:{ text:'' } };
+  segments.push(seg);
+
+  // build segment UI (title + input)
+  const box = document.createElement('div');
   box.className = 'segment-box';
-  box.dataset.regionId = region.id;
+  box.dataset.segmentId = seg.id;
 
   const title = document.createElement('div');
   title.className = 'segment-title';
-  title.textContent = `Segmen: ${region.start.toFixed(2)} - ${region.end.toFixed(2)}`;
+  title.textContent = `Segmen: ${s.toFixed(2)} - ${e.toFixed(2)}`;
 
   const input = document.createElement('input');
   input.className = 'segment-input';
   input.placeholder = 'Teks untuk segmen ini';
-  input.dataset.regionId = region.id;
-  input.addEventListener('input', ()=> {
-    // no-op: text used by renderer
+  input.addEventListener('input', () => {
+    seg.data.text = input.value;
   });
 
   const del = document.createElement('button');
   del.textContent = 'Hapus segmen';
-  del.style.marginTop='8px';
-  del.addEventListener('click', ()=>{
-    region.remove();
+  del.addEventListener('click', () => {
+    // remove block and ui and markers (both)
+    block.remove();
     box.remove();
+    // remove markers
+    removeMarkerById(startMarker.id);
+    removeMarkerById(endMarker.id);
+    // remove segment from array
+    segments = segments.filter(sx => sx.id !== seg.id);
   });
 
   box.appendChild(title);
   box.appendChild(input);
   box.appendChild(del);
-  SEGMENTS_CONTAINER.appendChild(box);
+  segmentsContainer.appendChild(box);
+
+  return seg;
 }
 
-// update UI when region changes
-function syncRegionToUI(region){
-  const box = document.querySelector(`[data-region-id="${region.id}"]`);
-  if (!box) return;
-  const title = box.querySelector('.segment-title');
-  title.textContent = `Segmen: ${region.start.toFixed(2)} - ${region.end.toFixed(2)}`;
-  const input = box.querySelector('.segment-input');
-  input.dataset.start = region.start;
-  input.dataset.end = region.end;
-}
-
-// remove UI
-function removeSegmentUI(region){
-  const box = document.querySelector(`[data-region-id="${region.id}"]`);
-  if (box) box.remove();
-}
-
-// --- add visible handle on top of region (cantolan)
-function addHandlesToRegion(region){
-  // region.element is a DOM element rendered by wavesurfer plugin
-  const el = region.element;
-  if (!el) return;
-  // create handle if none
-  if (el.querySelector('.region-handle')) return;
-
-  const handle = document.createElement('div');
-  handle.className = 'region-handle';
-  handle.textContent = '✦'; // icon / label, simple
-  el.style.position = 'relative';
-  el.appendChild(handle);
-
-  // position handle center above region; keep updated as region moves
-  function updateHandlePos(){
-    // region.element has style left/width percents; place handle at center
-    const rect = el.getBoundingClientRect();
-    const parentRect = el.parentElement.getBoundingClientRect();
-    const left = (rect.left - parentRect.left) + rect.width/2;
-    handle.style.left = `${left}px`;
+/* remove marker helper */
+function removeMarkerById(id){
+  const idx = markers.findIndex(m=>m.id===id);
+  if (idx === -1) return;
+  const m = markers[idx];
+  if (m.el && m.el.parentElement) m.el.remove();
+  markers.splice(idx,1);
+  // also remove segments referencing this marker
+  const segsToRemove = segments.filter(s => s.startMarkerId===id || s.endMarkerId===id);
+  for (const s of segsToRemove){
+    if (s.elBlock) s.elBlock.remove();
+    const ui = document.querySelector(`[data-segment-id="${s.id}"]`);
+    if (ui) ui.remove();
   }
-
-  updateHandlePos();
-
-  // observe changes to element's style (left/width) using MutationObserver
-  const mo = new MutationObserver(updateHandlePos);
-  mo.observe(el, { attributes: true, attributeFilter: ['style','class'] });
-
-  // enable dragging by handle (drag entire region)
-  let dragging = false;
-  handle.addEventListener('mousedown', (ev) => {
-    ev.preventDefault();
-    dragging = true;
-    handle.style.cursor = 'grabbing';
-    document.body.style.userSelect = 'none';
-  });
-  window.addEventListener('mousemove', (ev) => {
-    if (!dragging) return;
-    // translate mouse x to time and move region so its center aligns under cursor
-    const t = pxToTime(ev.clientX);
-    const half = (region.end - region.start)/2;
-    let s = t - half;
-    let e = t + half;
-    const dur = wavesurfer.getDuration() || 0;
-    if (s < 0){ s = 0; e = region.end - region.start; }
-    if (e > dur){ e = dur; s = dur - (region.end - region.start); if (s<0) s=0; }
-    region.update({ start: s, end: e });
-  });
-  window.addEventListener('mouseup', ()=> {
-    if (!dragging) return;
-    dragging = false;
-    handle.style.cursor = 'grab';
-    document.body.style.userSelect = '';
-  });
-
-  // add small visual grips inside region (left/right) to hint resize (they won't break built-in resize)
-  const gripL = document.createElement('div'); gripL.className='grip left';
-  const gripR = document.createElement('div'); gripR.className='grip right';
-  el.appendChild(gripL); el.appendChild(gripR);
-
-  // Also allow manual resize via dragging grips: implement simple pointer move
-  let resizing = null; // {which:'start'|'end', region}
-  gripL.addEventListener('mousedown', (ev)=> {
-    ev.stopPropagation(); ev.preventDefault();
-    resizing = { which:'start', region, originClientX: ev.clientX };
-    document.body.style.userSelect='none';
-  });
-  gripR.addEventListener('mousedown', (ev)=> {
-    ev.stopPropagation(); ev.preventDefault();
-    resizing = { which:'end', region, originClientX: ev.clientX };
-    document.body.style.userSelect='none';
-  });
-  window.addEventListener('mousemove', (ev)=> {
-    if (!resizing) return;
-    const t = pxToTime(ev.clientX);
-    if (resizing.which === 'start'){
-      // keep start < end - tiny epsilon
-      const newStart = Math.min(t, region.end - 0.01);
-      region.update({ start: Math.max(0, newStart) });
-    } else {
-      const newEnd = Math.max(t, region.start + 0.01);
-      const dur = wavesurfer.getDuration() || 0;
-      region.update({ end: Math.min(dur, newEnd) });
-    }
-  });
-  window.addEventListener('mouseup', ()=> {
-    if (resizing) {
-      resizing = null;
-      document.body.style.userSelect='';
-    }
-  });
+  segments = segments.filter(s => s.startMarkerId !== id && s.endMarkerId !== id);
 }
 
-// convert clientX in waveform to time
-function pxToTime(clientX){
-  const rect = WAVEFORM_EL.getBoundingClientRect();
-  const x = clientX - rect.left;
-  const w = rect.width;
-  const duration = wavesurfer.getDuration() || 1;
-  let t = (x / w) * duration;
-  if (t < 0) t = 0;
-  if (t > duration) t = duration;
-  return t;
-}
-
-// --- playback + renderer
-let rafId = null;
-function renderLoop(){
-  drawBackground();
-  const t = wavesurfer.getCurrentTime();
-  // find active region
-  const regions = Object.values(wavesurfer.regions.list || {});
-  const active = regions.find(r => t >= r.start && t <= r.end);
-  if (!active){
-    // draw neutral
-    CTX.drawImage(neutralImg, 0, 0, CANVAS_W, CANVAS_H);
-  } else {
-    // get corresponding text from UI
-    const ui = document.querySelector(`[data-region-id="${active.id}"]`);
-    let text = '';
-    if (ui) text = (ui.querySelector('.segment-input').value || '').replace(/\s+/g,'');
-    if (!text) {
-      CTX.drawImage(neutralImg, 0, 0, CANVAS_W, CANVAS_H);
-    } else {
-      // distribute letters evenly across region duration
-      const letters = text.split('');
-      const index = Math.floor(((t - active.start) / (active.end - active.start)) * letters.length);
-      const letter = letters[Math.max(0, Math.min(letters.length - 1, index))];
-      const img = getVisemeImg(letter);
-      // draw centered scaled
-      const scale = Math.min(CANVAS_W / img.width, CANVAS_H / img.height) * 0.9;
-      const w = img.width * scale, h = img.height * scale;
-      CTX.drawImage(img, (CANVAS_W - w)/2, (CANVAS_H - h)/2, w, h);
+/* update segments visuals when one of its markers moved */
+function updateSegmentsForMarker(markerId){
+  for (const seg of segments){
+    if (seg.startMarkerId === markerId || seg.endMarkerId === markerId){
+      const startM = markers.find(m=>m.id===seg.startMarkerId);
+      const endM = markers.find(m=>m.id===seg.endMarkerId);
+      if (!startM || !endM) continue;
+      let s = startM.time, e = endM.time;
+      if (s > e){ const tmp=s; s=e; e=tmp; }
+      const rect = waveformRect();
+      const left = Math.round((s / (wavesurfer.getDuration()||1)) * rect.width);
+      const right = Math.round((e / (wavesurfer.getDuration()||1)) * rect.width);
+      seg.elBlock.style.left = left + 'px';
+      seg.elBlock.style.width = Math.max(2, right - left) + 'px';
+      // update segment UI title
+      const ui = document.querySelector(`[data-segment-id="${seg.id}"]`);
+      if (ui) ui.querySelector('.segment-title').textContent = `Segmen: ${s.toFixed(2)} - ${e.toFixed(2)}`;
     }
   }
-  rafId = requestAnimationFrame(renderLoop);
 }
 
-PLAY_BTN.addEventListener('click', async ()=>{
+/* sync marker movement to UI (if marker moved update linked segment UI) */
+function syncSegmentUIForMarker(markerId){
+  for (const seg of segments){
+    if (seg.startMarkerId===markerId || seg.endMarkerId===markerId){
+      const startM = markers.find(m=>m.id===seg.startMarkerId);
+      const endM = markers.find(m=>m.id===seg.endMarkerId);
+      if (!startM || !endM) continue;
+      let s = Math.min(startM.time, endM.time);
+      let e = Math.max(startM.time, endM.time);
+      const ui = document.querySelector(`[data-segment-id="${seg.id}"]`);
+      if (ui) ui.querySelector('.segment-title').textContent = `Segmen: ${s.toFixed(2)} - ${e.toFixed(2)}`;
+    }
+  }
+}
+
+/* when audio loaded */
+audioInput.addEventListener('change', (e)=>{
+  const f = e.target.files[0];
+  if (!f) return;
+  wavesurfer.load(URL.createObjectURL(f));
+  // clean overlay + state
+  markers.forEach(m=> m.el.remove());
+  segments.forEach(s=> s.elBlock.remove());
+  markers = []; segments = []; pendingStartMarker = null;
+  segmentsContainer.innerHTML = '';
+});
+
+/* add-marker button flow (MODE 1: start -> end) */
+addMarkerBtn.addEventListener('click', ()=>{
   if (!wavesurfer.isReady) return alert('Upload audio dulu');
-  if (wavesurfer.isPlaying()) {
-    wavesurfer.pause();
-    PLAY_BTN.textContent = '▶';
-    if (rafId) cancelAnimationFrame(rafId);
+  const cur = wavesurfer.getCurrentTime();
+  if (!pendingStartMarker){
+    // create start marker
+    const m = createMarkerAt(cur, 'start');
+    pendingStartMarker = m;
   } else {
-    // ensure audio context resumed on user gesture
+    // create end marker and a segment
+    const m2 = createMarkerAt(cur, 'end');
+    // pair them (ensure proper order when times swapped)
+    const startM = pendingStartMarker.time <= m2.time ? pendingStartMarker : m2;
+    const endM = pendingStartMarker.time <= m2.time ? m2 : pendingStartMarker;
+    // create segment
+    const seg = createSegment(startM, endM);
+    pendingStartMarker = null;
+  }
+});
+
+/* play/pause toggle using wavesurfer playback */
+let raf = null;
+playBtn.addEventListener('click', async ()=>{
+  if (!wavesurfer.isReady) return alert('Upload audio dulu');
+  if (wavesurfer.isPlaying()){
+    wavesurfer.pause();
+    playBtn.textContent = '▶';
+    if (raf) cancelAnimationFrame(raf);
+  } else {
     try { await wavesurfer.backend.getAudioContext().resume(); } catch(e){}
     wavesurfer.play();
-    PLAY_BTN.textContent = '⏸';
-    if (!rafId) renderLoop();
+    playBtn.textContent = '⏸';
+    startRenderLoop();
   }
 });
 
-// stop render when audio finishes
-wavesurfer.on('finish', ()=> {
-  if (rafId) cancelAnimationFrame(rafId);
-  PLAY_BTN.textContent = '▶';
+/* render loop draws canvas preview based on active segment and its text */
+function startRenderLoop(){
+  function loop(){
+    drawBackground();
+    const t = wavesurfer.getCurrentTime();
+    // find active segment by time
+    const activeSeg = segments.find(s=>{
+      const sm = markers.find(m=>m.id===s.startMarkerId);
+      const em = markers.find(m=>m.id===s.endMarkerId);
+      if (!sm || !em) return false;
+      const start = Math.min(sm.time, em.time);
+      const end = Math.max(sm.time, em.time);
+      return t >= start && t <= end;
+    });
+    if (!activeSeg){
+      ctx.drawImage(neutralImg, 0,0, CANVAS_W, CANVAS_H);
+    } else {
+      const sm = markers.find(m=>m.id===activeSeg.startMarkerId);
+      const em = markers.find(m=>m.id===activeSeg.endMarkerId);
+      if (!sm || !em){ ctx.drawImage(neutralImg,0,0,CANVAS_W,CANVAS_H); }
+      else {
+        const start = Math.min(sm.time, em.time);
+        const end = Math.max(sm.time, em.time);
+        const text = activeSeg.data.text || '';
+        if (!text) { ctx.drawImage(neutralImg,0,0,CANVAS_W,CANVAS_H); }
+        else {
+          const letters = text.replace(/\s+/g,'').split('');
+          const frac = (t - start) / Math.max(0.0001, (end - start));
+          const idx = Math.floor(frac * letters.length);
+          const letter = letters[Math.max(0, Math.min(letters.length-1, idx))];
+          const img = getVisemeImg(letter);
+          if (img && img.complete){
+            const scale = Math.min(CANVAS_W / img.width, CANVAS_H / img.height) * 0.9;
+            const w = img.width * scale, h = img.height * scale;
+            ctx.drawImage(img, (CANVAS_W - w)/2, (CANVAS_H - h)/2, w, h);
+          } else {
+            ctx.drawImage(neutralImg,0,0,CANVAS_W,CANVAS_H);
+          }
+        }
+      }
+    }
+    raf = requestAnimationFrame(loop);
+  }
+  if (!raf) loop();
+}
+
+/* stop when audio finishes */
+wavesurfer.on('finish', ()=>{
+  playBtn.textContent = '▶';
+  if (raf) cancelAnimationFrame(raf);
+  raf = null;
 });
 
-// --- zoom slider: uses wavesurfer.zoom(pxPerSec)
-ZOOM_SLIDER.addEventListener('input', (e)=>{
+/* Zoom slider -> try wavesurfer.zoom if available, else no-op visual */
+zoomSlider.addEventListener('input', (e)=>{
   const val = Number(e.target.value);
-  // wavesurfer.zoom exists in many builds; fallback safe-guard
-  if (typeof wavesurfer.zoom === 'function'){
+  if (typeof wavesurfer.zoom === 'function') {
     wavesurfer.zoom(val);
   } else {
-    console.warn('zoom API tidak tersedia di versi wavesurfer ini');
+    // fallback: scale waveform element horizontally (visual only)
+    waveformEl.style.transformOrigin = 'left center';
+    waveformEl.style.transform = `scaleX(${val/100})`;
+    // reposition overlay accordingly (we keep overlay absolute so markers still map correctly via time->px)
   }
 });
 
-// when graph ready, set default zoom
-wavesurfer.on('ready', ()=>{
-  // default zoom from slider
-  if (typeof wavesurfer.zoom === 'function') wavesurfer.zoom(Number(ZOOM_SLIDER.value));
+/* pinch gesture to change zoom (mobile) */
+let pinchStartDist = null, pinchStartVal = null;
+waveformEl.addEventListener('touchstart', (ev)=>{
+  if (ev.touches && ev.touches.length === 2){
+    const dx = ev.touches[0].clientX - ev.touches[1].clientX;
+    const dy = ev.touches[0].clientY - ev.touches[1].clientY;
+    pinchStartDist = Math.hypot(dx,dy);
+    pinchStartVal = Number(zoomSlider.value);
+  }
+}, {passive:false});
+waveformEl.addEventListener('touchmove', (ev)=>{
+  if (ev.touches && ev.touches.length === 2 && pinchStartDist){
+    ev.preventDefault();
+    const dx = ev.touches[0].clientX - ev.touches[1].clientX;
+    const dy = ev.touches[0].clientY - ev.touches[1].clientY;
+    const dist = Math.hypot(dx,dy);
+    const ratio = dist / pinchStartDist;
+    let newVal = Math.round(pinchStartVal * ratio);
+    newVal = Math.max(20, Math.min(600, newVal));
+    zoomSlider.value = newVal;
+    // trigger zoom handler
+    const evt = new Event('input'); zoomSlider.dispatchEvent(evt);
+  }
+}, {passive:false});
+waveformEl.addEventListener('touchend', (ev)=>{ if (ev.touches.length < 2) { pinchStartDist = null; pinchStartVal = null; } });
+
+/* utility: reposition all overlays (markers + segments) on resize or zoom change */
+function repositionOverlay(){
+  const rect = waveformRect();
+  // markers
+  for (const m of markers){
+    const left = Math.round(timeToPx(m.time));
+    if (m.el) m.el.style.left = left + 'px';
+  }
+  // segments
+  for (const s of segments){
+    const sm = markers.find(x=>x.id===s.startMarkerId);
+    const em = markers.find(x=>x.id===s.endMarkerId);
+    if (!sm || !em) continue;
+    let start = Math.min(sm.time, em.time), end = Math.max(sm.time, em.time);
+    const left = Math.round(timeToPx(start));
+    const right = Math.round(timeToPx(end));
+    s.elBlock.style.left = left + 'px';
+    s.elBlock.style.width = Math.max(2, right - left) + 'px';
+    // update UI title too
+    const ui = document.querySelector(`[data-segment-id="${s.id}"]`);
+    if (ui) ui.querySelector('.segment-title').textContent = `Segmen: ${start.toFixed(2)} - ${end.toFixed(2)}`;
+  }
+}
+
+/* window resize handler */
+window.addEventListener('resize', () => {
+  setTimeout(repositionOverlay,120);
 });
 
-// --- export (basic webm recording as fallback)
-// simple: capture canvas frames + play audio simultaneously and build webm via MediaRecorder
-EXPORT_BTN.addEventListener('click', async ()=>{
+/* reposition overlay when wave is ready/zoomed */
+wavesurfer.on('ready', ()=>{
+  repositionOverlay();
+});
+zoomSlider.addEventListener('change', ()=> setTimeout(repositionOverlay,120));
+
+/* helper: waveform rect */
+function waveformRect(){ return waveformEl.getBoundingClientRect(); }
+
+/* export: basic webm capture of canvas + audio (keamanan/performance mobile) */
+exportBtn.addEventListener('click', async ()=>{
   if (!wavesurfer.isReady) return alert('Upload audio dulu');
-  // prepare audio element from wavesurfer backend
   const backend = wavesurfer.backend;
-  // get media stream from audio context
   const ac = backend.getAudioContext();
-  const src = backend.getMediaElement(); // if supported
-  // fallback: use wavesurfer.backend.media (depending on build)
-  let audioEl = src || document.querySelector('audio');
-  if (!audioEl){
-    alert('Tidak dapat menemukan elemen audio untuk direkam. Gunakan export manual (webm) nanti).');
+  // try to get audio element
+  let audioEl = document.querySelector('audio') || backend.getMediaElement && backend.getMediaElement();
+  if (!audioEl) {
+    alert('Tidak menemukan elemen audio untuk direkam. Gunakan webm manual.');
     return;
   }
-
-  // route audio into MediaStreamDestination
   const dest = ac.createMediaStreamDestination();
-  try {
-    // try to connect backend gain to dest
-    backend.gainNode.connect(dest);
-  } catch(e){
-    try { ac.destination.connect(dest); } catch(e2){}
-  }
-
-  const canvasStream = CANVAS.captureStream(25);
-  const mixedStream = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-
-  const rec = new MediaRecorder(mixedStream, { mimeType: 'video/webm; codecs=vp8,opus' });
+  try { backend.gainNode.connect(dest); } catch(e){ try{ ac.destination.connect(dest);}catch(_){} }
+  const canvasStream = canvas.captureStream(25);
+  const mixed = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  const rec = new MediaRecorder(mixed, {mimeType:'video/webm; codecs=vp8,opus'});
   const parts = [];
-  rec.ondataavailable = (e)=> { if (e.data && e.data.size) parts.push(e.data); };
+  rec.ondataavailable = e=> { if (e.data && e.data.size) parts.push(e.data); };
   rec.onstop = ()=> {
-    const blob = new Blob(parts, { type:'video/webm' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'lipsync_export.webm';
-    a.click();
+    const blob = new Blob(parts, {type:'video/webm'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'lipsync_export.webm'; a.click();
   };
-
-  // play from start and record
   wavesurfer.seekTo(0);
   rec.start();
   wavesurfer.play();
-  if (!rafId) renderLoop();
-
-  wavesurfer.on('finish', ()=> {
-    rec.stop();
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  });
+  if (!raf) startRenderLoop();
+  wavesurfer.on('finish', ()=> { rec.stop(); });
 });
+
+/* helper: waveformRect used above (declared again due to scope) */
+function waveformRect(){ return waveformEl.getBoundingClientRect(); }
+
+/* done */
+console.log('Marker-mode app.js loaded');
